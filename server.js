@@ -19,4 +19,5 @@ app.use('/api/stats', require('./routes/stats'));
 app.use('/api/makeups', require('./routes/makeups'));
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {});
+
+module.exports = app; // экспорт для Vercel
