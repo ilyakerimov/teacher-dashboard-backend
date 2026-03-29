@@ -7,84 +7,72 @@ const User = require('../models/User');
 const auth = require('../middleware/auth');
 const admin = require('../middleware/admin');
 
+// Статистика учителя (баланс, количество уроков)
 router.get('/teacher', auth, async (req, res) => {
   try {
     if (req.user.role === 'admin') {
       return res.status(403).json({ msg: 'Use admin stats' });
     }
-
     const groups = await Group.find({ teacherId: req.user.id });
     const groupIds = groups.map(g => g._id);
-
-    const lessons = await Lesson.find({ groupId: { $in: groupIds }, isCompleted: true });
-
-    let totalLessons = lessons.length;
-    let totalIncome = lessons.reduce((sum, l) => sum + l.totalIncome, 0);
-
-    let totalAbsences = 0;
-    for (const lesson of lessons) {
-      totalAbsences += lesson.attendance.filter(a => a.status === 'absent').length;
-    }
-
+    const totalLessons = await Lesson.countDocuments({ groupId: { $in: groupIds }, isCompleted: true });
     const openLessons = await Lesson.countDocuments({ groupId: { $in: groupIds }, isCompleted: false });
+    const teacher = await User.findById(req.user.id).select('balance');
 
+    // Возвращаем баланс вместо totalIncome
     res.json({
       totalLessons,
-      totalIncome,
-      totalAbsences,
-      openLessons
+      openLessons,
+      balance: teacher.balance
     });
   } catch (err) {
+    console.error(err);
     res.status(500).send('Server error');
   }
 });
 
+// Детальная статистика учителя (для страницы "Моя статистика")
 router.get('/teacher/detailed', auth, async (req, res) => {
   try {
     if (req.user.role === 'admin') {
       return res.status(403).json({ msg: 'Access denied' });
     }
-
     const groups = await Group.find({ teacherId: req.user.id });
     const groupIds = groups.map(g => g._id);
-
     const lessons = await Lesson.find({ groupId: { $in: groupIds }, isCompleted: true });
-
-    let totalLessons = lessons.length;
-    let totalIncome = lessons.reduce((sum, l) => sum + l.totalIncome, 0);
-
+    const totalLessons = lessons.length;
+    const teacher = await User.findById(req.user.id).select('balance');
     let totalAbsences = 0;
     for (const lesson of lessons) {
       totalAbsences += lesson.attendance.filter(a => a.status === 'absent').length;
     }
-
     const openLessons = await Lesson.countDocuments({ groupId: { $in: groupIds }, isCompleted: false });
 
     const groupsStats = [];
     for (const group of groups) {
       const groupLessons = await Lesson.find({ groupId: group._id, isCompleted: true });
       const lessonsCount = groupLessons.length;
-      const income = groupLessons.reduce((sum, l) => sum + l.totalIncome, 0);
       groupsStats.push({
         groupName: group.name,
         lessonsCount,
-        income,
         pricePerLesson: group.pricePerLesson
       });
     }
 
     res.json({
       totalLessons,
-      totalIncome,
       totalAbsences,
       openLessons,
+      balance: teacher.balance,
       groupsStats
     });
   } catch (err) {
+    console.error(err);
     res.status(500).send('Server error');
   }
 });
 
+// Админ статистика
 router.get('/admin', auth, admin, async (req, res) => {
   try {
     const teachers = await User.find({ role: 'teacher' }).select('name balance');
@@ -118,10 +106,12 @@ router.get('/admin', auth, admin, async (req, res) => {
       teacherStats
     });
   } catch (err) {
+    console.error(err);
     res.status(500).send('Server error');
   }
 });
 
+// Детальная админ статистика
 router.get('/admin/detailed', auth, admin, async (req, res) => {
   try {
     const teachers = await User.find({ role: 'teacher' }).select('name balance');
@@ -172,6 +162,7 @@ router.get('/admin/detailed', auth, admin, async (req, res) => {
       groupsStats
     });
   } catch (err) {
+    console.error(err);
     res.status(500).send('Server error');
   }
 });

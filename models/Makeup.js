@@ -5,11 +5,9 @@ const MakeupSchema = new mongoose.Schema({
   originalLessonId: { type: mongoose.Schema.Types.ObjectId, ref: 'Lesson', required: true },
   groupId: { type: mongoose.Schema.Types.ObjectId, ref: 'Group', required: true },
   teacherId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  date: { type: Date, default: Date.now },
+  scheduledDate: { type: Date }, 
   isCompleted: { type: Boolean, default: false },
-  attendanceStatus: { type: String, enum: ['present', 'absent', 'late', 'excused'], default: 'present' },
-  mark: { type: Number, min: 1, max: 5 },
-  price: { type: Number, required: true },
+  lessonId: { type: mongoose.Schema.Types.ObjectId, ref: 'Lesson' },
   reason: { type: String }
 });
 

@@ -12,7 +12,9 @@ const TransactionSchema = new mongoose.Schema({
 const StudentSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String },
-  phone: { type: String },
+  phone: { type: String },                     // телефон ученика
+  parentName: { type: String },                // имя родителя
+  parentPhone: { type: String },               // телефон родителя
   balance: { type: Number, default: 0 },
   groups: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Group' }],
   history: [TransactionSchema]

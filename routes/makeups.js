@@ -8,76 +8,78 @@ const User = require('../models/User');
 const auth = require('../middleware/auth');
 const admin = require('../middleware/admin');
 
-// Отработки конкретного ученика
-router.get('/student/:studentId', auth, async (req, res) => {
-  try {
-    const { studentId } = req.params;
-    const makeups = await Makeup.find({ studentId })
-      .populate('originalLessonId groupId teacherId');
-    res.json(makeups);
-  } catch (err) {
-    res.status(500).send('Server error');
-  }
-});
-
-// Отработки текущего учителя
 router.get('/teacher', auth, async (req, res) => {
   try {
     const teacherId = req.user.id;
-    const makeups = await Makeup.find({ teacherId })
-      .populate('studentId', 'name')
+    const { status } = req.query;
+    let filter = { teacherId };
+    if (status === 'completed') filter.isCompleted = true;
+    else if (status === 'pending') filter.isCompleted = false;
+
+    const makeups = await Makeup.find(filter)
+      .populate('studentId', 'name parentName parentPhone phone')
       .populate('groupId', 'name')
-      .populate('originalLessonId', 'date');
+      .populate('originalLessonId', 'date')
+      .sort({ scheduledDate: 1 });
     res.json(makeups);
   } catch (err) {
+    console.error(err);
     res.status(500).send('Server error');
   }
 });
 
-// Все отработки (только для админа)
 router.get('/all', auth, admin, async (req, res) => {
   try {
-    const makeups = await Makeup.find()
+    const { status } = req.query;
+    let filter = {};
+    if (status === 'completed') filter.isCompleted = true;
+    else if (status === 'pending') filter.isCompleted = false;
+
+    const makeups = await Makeup.find(filter)
       .populate('studentId', 'name')
       .populate('groupId', 'name')
       .populate('originalLessonId', 'date')
-      .populate('teacherId', 'name');
+      .populate('teacherId', 'name')
+      .sort({ scheduledDate: 1 });
     res.json(makeups);
   } catch (err) {
+    console.error(err);
     res.status(500).send('Server error');
   }
 });
 
-// Создать отработку (вручную)
 router.post('/', auth, async (req, res) => {
   const { studentId, originalLessonId } = req.body;
   try {
     const lesson = await Lesson.findById(originalLessonId).populate('groupId');
     if (!lesson) return res.status(404).json({ msg: 'Lesson not found' });
     const group = await Group.findById(lesson.groupId._id);
+    if (!group) return res.status(404).json({ msg: 'Group not found' });
     if (req.user.role !== 'admin' && group.teacherId.toString() !== req.user.id) {
       return res.status(403).json({ msg: 'Access denied' });
     }
+
     const existing = await Makeup.findOne({ studentId, originalLessonId });
     if (existing) return res.status(400).json({ msg: 'Makeup already exists' });
+
     const makeup = new Makeup({
       studentId,
       originalLessonId,
       groupId: lesson.groupId._id,
       teacherId: group.teacherId,
-      price: group.pricePerLesson,
-      date: new Date()
+      scheduledDate: null,
+      reason: req.body.reason || ''
     });
     await makeup.save();
     res.json(makeup);
   } catch (err) {
+    console.error(err);
     res.status(500).send('Server error');
   }
 });
 
-// Завершить отработку
-router.put('/:id/complete', auth, async (req, res) => {
-  const { attendanceStatus, mark, reason } = req.body;
+router.put('/:id/schedule', auth, async (req, res) => {
+  const { scheduledDate } = req.body;
   try {
     const makeup = await Makeup.findById(req.params.id);
     if (!makeup) return res.status(404).json({ msg: 'Makeup not found' });
@@ -85,51 +87,67 @@ router.put('/:id/complete', auth, async (req, res) => {
     if (req.user.role !== 'admin' && makeup.teacherId.toString() !== req.user.id) {
       return res.status(403).json({ msg: 'Access denied' });
     }
-    makeup.isCompleted = true;
-    makeup.attendanceStatus = attendanceStatus || 'present';
-    if (mark) makeup.mark = mark;
-    if (reason) makeup.reason = reason;
-    if (attendanceStatus === 'present' || attendanceStatus === 'late') {
-      const student = await Student.findById(makeup.studentId);
-      const group = await Group.findById(makeup.groupId);
-      if (student && group) {
-        const price = group.pricePerLesson;
-        student.balance -= price;
-        student.history.push({
-          amount: price,
-          type: 'debit',
-          reason: `Отработка пропущенного занятия (${makeup.date.toLocaleDateString()})`,
-          groupId: group._id,
-          lessonId: makeup.originalLessonId
-        });
-        await student.save();
-        const teacher = await User.findById(makeup.teacherId);
-        if (teacher) {
-          teacher.balance += price;
-          await teacher.save();
-        }
-      }
-    }
+    if (!scheduledDate) return res.status(400).json({ msg: 'scheduledDate required' });
+
+    const group = await Group.findById(makeup.groupId);
+    if (!group) return res.status(404).json({ msg: 'Group not found' });
+
+    const lesson = new Lesson({
+      groupId: makeup.groupId,
+      teacherId: makeup.teacherId,
+      date: new Date(scheduledDate),
+      attendance: [{ studentId: makeup.studentId, status: 'present' }],
+      isMakeup: true,
+      makeupForStudent: makeup.studentId,
+      originalLessonId: makeup.originalLessonId,
+      isCompleted: false
+    });
+    await lesson.save();
+
+    makeup.scheduledDate = new Date(scheduledDate);
+    makeup.lessonId = lesson._id;
     await makeup.save();
-    res.json(makeup);
+
+    res.json({ makeup, lesson });
   } catch (err) {
+    console.error(err);
     res.status(500).send('Server error');
   }
 });
 
-// Получить отработку по ID
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    const makeup = await Makeup.findById(req.params.id);
+    if (!makeup) return res.status(404).json({ msg: 'Makeup not found' });
+    if (makeup.isCompleted) return res.status(400).json({ msg: 'Cannot delete completed makeup' });
+    if (req.user.role !== 'admin' && makeup.teacherId.toString() !== req.user.id) {
+      return res.status(403).json({ msg: 'Access denied' });
+    }
+    if (makeup.lessonId) {
+      await Lesson.findByIdAndDelete(makeup.lessonId);
+    }
+    await Makeup.findByIdAndDelete(req.params.id);
+    res.json({ msg: 'Makeup deleted' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Server error');
+  }
+});
+
 router.get('/:id', auth, async (req, res) => {
   try {
     const makeup = await Makeup.findById(req.params.id)
-      .populate('studentId', 'name')
+      .populate('studentId', 'name parentName parentPhone phone')
       .populate('groupId', 'name')
-      .populate('originalLessonId', 'date');
+      .populate('originalLessonId', 'date')
+      .populate('lessonId');
     if (!makeup) return res.status(404).json({ msg: 'Makeup not found' });
     if (req.user.role !== 'admin' && makeup.teacherId.toString() !== req.user.id) {
       return res.status(403).json({ msg: 'Access denied' });
     }
     res.json(makeup);
   } catch (err) {
+    console.error(err);
     res.status(500).send('Server error');
   }
 });

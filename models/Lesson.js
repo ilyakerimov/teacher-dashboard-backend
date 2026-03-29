@@ -13,7 +13,10 @@ const LessonSchema = new mongoose.Schema({
   date: { type: Date, default: Date.now },
   attendance: [AttendanceSchema],
   totalIncome: { type: Number, default: 0 },
-  isCompleted: { type: Boolean, default: false }
+  isCompleted: { type: Boolean, default: false },
+  isMakeup: { type: Boolean, default: false },           // отработка ли это
+  makeupForStudent: { type: mongoose.Schema.Types.ObjectId, ref: 'Student' }, // для какого студента отработка
+  originalLessonId: { type: mongoose.Schema.Types.ObjectId, ref: 'Lesson' }   // ссылка на пропущенный урок
 });
 
 module.exports = mongoose.model('Lesson', LessonSchema);

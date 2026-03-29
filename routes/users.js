@@ -3,6 +3,8 @@ const router = express.Router();
 const User = require('../models/User');
 const auth = require('../middleware/auth');
 const admin = require('../middleware/admin');
+const Lesson = require('../models/Lesson');
+const Student = require('../models/Student');
 
 // Список преподавателей
 router.get('/teachers', auth, admin, async (req, res) => {
@@ -31,7 +33,7 @@ router.post('/teacher', auth, admin, async (req, res) => {
   }
 });
 
-// Обновить данные преподавателя
+// Обновить преподавателя
 router.put('/teacher/:id', auth, admin, async (req, res) => {
   const { name, email, balance } = req.body;
   try {
@@ -73,6 +75,36 @@ router.delete('/teacher/:id', auth, admin, async (req, res) => {
   try {
     await User.findByIdAndDelete(req.params.id);
     res.json({ msg: 'Teacher removed' });
+  } catch (err) {
+    res.status(500).send('Server error');
+  }
+});
+
+// Получить баланс и историю текущего учителя
+router.get('/me/balance-history', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'teacher') {
+      return res.status(403).json({ msg: 'Access denied' });
+    }
+    const teacher = await User.findById(req.user.id).select('balance');
+    // История начислений: можно собрать из завершённых уроков учителя
+    const groups = require('../models/Group');
+    const teacherGroups = await groups.find({ teacherId: req.user.id });
+    const groupIds = teacherGroups.map(g => g._id);
+    const lessons = await Lesson.find({ groupId: { $in: groupIds }, isCompleted: true })
+      .populate('groupId', 'name')
+      .sort({ date: -1 })
+      .limit(50);
+
+    const history = lessons.map(lesson => ({
+      date: lesson.date,
+      amount: lesson.totalIncome,
+      type: 'credit',
+      reason: `Урок группы ${lesson.groupId.name} от ${lesson.date.toLocaleDateString()}`,
+      lessonId: lesson._id
+    }));
+
+    res.json({ balance: teacher.balance, history });
   } catch (err) {
     res.status(500).send('Server error');
   }
